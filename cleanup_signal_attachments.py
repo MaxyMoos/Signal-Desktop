@@ -29,15 +29,16 @@ import platform
 import shutil
 import sqlite3
 import sys
+from Crypto.Cipher import AES
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 
 try:
-    from pysqlcipher3 import dbapi2 as sqlcipher
+    from sqlcipher3 import dbapi2 as sqlcipher
 except ImportError:
-    print("Error: pysqlcipher3 is not installed.")
-    print("Install it with: pip install pysqlcipher3")
+    print("Error: sqlcipher3 is not installed.")
+    print("Install it with: pip install sqlcipher3")
     sys.exit(1)
 
 try:
@@ -55,8 +56,19 @@ except ImportError:
     KEYRING_AVAILABLE = False
 
 
+if sys.platform == "win32":
+    from base64 import b64decode
+    from ctypes import *  # pyright: ignore [reportWildcardImportFromLibrary]
+    from ctypes.wintypes import DWORD
+
+    class DataBlob(Structure):
+        _fields_ = [("cbData", DWORD), ("pbData", POINTER(c_char))]
+
+
 class SignalAttachmentCleaner:
-    def __init__(self, user_data_path: Path, dry_run: bool = False, verbose: bool = False):
+    def __init__(
+        self, user_data_path: Path, dry_run: bool = False, verbose: bool = False
+    ):
         self.user_data_path = Path(user_data_path)
         self.dry_run = dry_run
         self.verbose = verbose
@@ -70,10 +82,10 @@ class SignalAttachmentCleaner:
         self.temp_dir = self.user_data_path / "temp"
 
         self.stats = {
-            'messages_processed': 0,
-            'files_deleted': 0,
-            'bytes_freed': 0,
-            'errors': 0
+            "messages_processed": 0,
+            "files_deleted": 0,
+            "bytes_freed": 0,
+            "errors": 0,
         }
 
     def log(self, message: str, level: str = "INFO"):
@@ -175,16 +187,45 @@ class SignalAttachmentCleaner:
 
     def _decrypt_key_windows(self, encrypted_hex: str) -> Optional[str]:
         """Decrypt key on Windows using DPAPI"""
-        try:
-            import win32crypt
-            encrypted_bytes = bytes.fromhex(encrypted_hex)
-            decrypted_bytes = win32crypt.CryptUnprotectData(encrypted_bytes, None, None, None, 0)[1]
-            return decrypted_bytes.decode('utf-8')
-        except ImportError:
-            self.log("win32crypt not available - cannot decrypt Windows key", "WARNING")
-            return None
-        except Exception:
-            return None
+        with open(self.user_data_path / "Local State", encoding="utf-8") as lsf:
+            data = json.loads(lsf.read())
+        if "os_crypt" in data and "encrypted_key" in data["os_crypt"]:
+            pw_encrypted_b64 = data["os_crypt"]["encrypted_key"]
+        else:
+            print("ERROR: Encrypted password not found in Local State")
+            raise
+
+        # base64decode the encrypted password, and cut off the first 5 bytes ('D' 'P' 'A' 'P' 'I')
+        pw_encrypted = b64decode(pw_encrypted_b64)[5:]
+
+        # decrypt the password
+        data_in = DataBlob(
+            len(pw_encrypted), c_buffer(pw_encrypted, len(pw_encrypted))
+        )
+        data_out = DataBlob()
+        if windll.crypt32.CryptUnprotectData(
+            byref(data_in), None, None, None, None, 0, byref(data_out)
+        ):
+            cbData = int(data_out.cbData)
+            pbData = data_out.pbData
+            buffer = c_buffer(cbData)
+            cdll.msvcrt.memcpy(buffer, pbData, cbData)
+            windll.kernel32.LocalFree(pbData)
+            pw = buffer.raw
+        else:
+            print("ERROR: Failed to decrypt password")
+            raise
+
+        # The encrypted key consists of the following parts:
+        # 3 bytes header ('V' '1' '0')
+        # 12 bytes nonce
+        # 64 bytes encrypted data
+        # 16 bytes MAC
+        encryptedKey_struct = memoryview(bytearray.fromhex(encrypted_hex))
+        key = AES.new(
+            pw, AES.MODE_GCM, nonce=encryptedKey_struct[3:15]
+        ).decrypt_and_verify(encryptedKey_struct[15:79], encryptedKey_struct[79:])
+        return key.decode("ascii")
 
     def _decrypt_encrypted_key(self, encrypted_hex: str) -> Optional[str]:
         """Decrypt the modern encryptedKey format based on platform"""
@@ -208,7 +249,7 @@ class SignalAttachmentCleaner:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
-        with open(self.config_path, 'r') as f:
+        with open(self.config_path, "r") as f:
             config = json.load(f)
 
         # Try modern encrypted key first
@@ -260,7 +301,12 @@ class SignalAttachmentCleaner:
         date_str = date_str.lower().strip()
 
         # Relative dates
-        if 'year' in date_str or 'month' in date_str or 'day' in date_str or 'week' in date_str:
+        if (
+            "year" in date_str
+            or "month" in date_str
+            or "day" in date_str
+            or "week" in date_str
+        ):
             now = datetime.now()
             parts = date_str.split()
 
@@ -269,13 +315,13 @@ class SignalAttachmentCleaner:
                     amount = int(parts[0])
                     unit = parts[1]
 
-                    if 'year' in unit:
+                    if "year" in unit:
                         return now - relativedelta(years=amount)
-                    elif 'month' in unit:
+                    elif "month" in unit:
                         return now - relativedelta(months=amount)
-                    elif 'week' in unit:
+                    elif "week" in unit:
                         return now - relativedelta(weeks=amount)
-                    elif 'day' in unit:
+                    elif "day" in unit:
                         return now - relativedelta(days=amount)
                 except (ValueError, IndexError):
                     pass
@@ -308,23 +354,26 @@ class SignalAttachmentCleaner:
 
         return conn
 
-    def get_messages_with_attachments(self, conn: sqlcipher.Connection, before_timestamp: int) -> List[Dict]:
+    def get_messages_with_attachments(
+        self, conn: sqlcipher.Connection, before_timestamp: int
+    ) -> List[Dict]:
         """Query messages with attachments before the cutoff date"""
         self.log(f"Querying messages before timestamp: {before_timestamp}")
 
         # Query the messages table for messages with attachments
         query = """
             SELECT
-                id,
-                json,
-                received_at,
-                sent_at,
-                hasAttachments,
-                hasVisualMediaAttachments,
-                hasFileAttachments
-            FROM messages
-            WHERE (received_at < ? OR sent_at < ?)
-              AND (hasAttachments = 1 OR hasVisualMediaAttachments = 1 OR hasFileAttachments = 1)
+                m.id,
+                m.json,
+                m.received_at,
+                m.sent_at,
+                m.hasAttachments,
+                m.hasVisualMediaAttachments,
+                m.hasFileAttachments
+            FROM messages m
+            WHERE
+                (m.received_at < ? OR m.sent_at < ?)
+                AND (m.hasAttachments = 1 OR m.hasVisualMediaAttachments = 1 OR m.hasFileAttachments = 1)
             ORDER BY received_at ASC
         """
 
@@ -332,14 +381,78 @@ class SignalAttachmentCleaner:
         messages = []
 
         for row in cursor:
+            query = """
+                SELECT
+                    ma.size,
+                    ma.contentType,
+                    ma.path,
+                    ma.fileName,
+                    ma.thumbnailPath,
+                    ma.thumbnailSize,
+                    ma.screenshotPath,
+                    ma.screenshotSize
+                FROM message_attachments ma
+                WHERE
+                    ma.messageId = ?
+                    AND ma.editHistoryIndex = -1
+                    AND ma.attachmentType = 'attachment'
+            """
+            att_cursor = conn.execute(query, (row[0],))
+
+            # debugging data query
+            q = """
+                SELECT
+                    ma.attachmentType,
+                    ma.size,
+                    ma.contentType,
+                    ma.path,
+                    ma.caption,
+                    ma.fileName,
+                    ma.blurHash,
+                    ma.downloadPath,
+                    ma.thumbnailPath,
+                    ma.thumbnailSize,
+                    ma.thumbnailContentType,
+                    ma.thumbnailLocalKey,
+                    ma.screenshotPath,
+                    ma.screenshotSize,
+                    ma.screenshotContentType,
+                    ma.screenshotLocalKey,
+                    ma.backupThumbnailPath,
+                    ma.backupThumbnailContentType,
+                    ma.backupThumbnailLocalKey
+                FROM message_attachments ma
+                WHERE
+                    ma.messageId = ?
+                    AND ma.editHistoryIndex = -1
+            """
+            raw_c = conn.execute(q, (row[0],))
+
             message = {
-                'id': row[0],
-                'json': json.loads(row[1]) if row[1] else {},
-                'received_at': row[2],
-                'sent_at': row[3],
-                'hasAttachments': row[4],
-                'hasVisualMediaAttachments': row[5],
-                'hasFileAttachments': row[6]
+                "id": row[0],
+                "json": json.loads(row[1]) if row[1] else {},
+                "received_at": row[2],
+                "sent_at": row[3],
+                "hasAttachments": row[4],
+                "hasVisualMediaAttachments": row[5],
+                "hasFileAttachments": row[6],
+                "attachments": [
+                    {
+                        "size": att_row[0],
+                        "contentType": att_row[1],
+                        "path": att_row[2],
+                        "fileName": att_row[3],
+                        "thumbnail": {
+                            "path": att_row[4],
+                            "size": att_row[5],
+                        },
+                        "screenshot": {
+                            "path": att_row[6],
+                            "size": att_row[7],
+                        }
+                    }
+                    for att_row in att_cursor
+                ],
             }
             messages.append(message)
 
@@ -349,68 +462,68 @@ class SignalAttachmentCleaner:
     def extract_attachment_paths(self, message: Dict) -> List[str]:
         """Extract all attachment file paths from a message"""
         paths = []
-        msg_json = message.get('json', {})
+        msg_json = message.get("json", {})
 
         # Main attachments
-        attachments = msg_json.get('attachments', [])
+        attachments = message.get("attachments", [])
         for att in attachments:
-            if isinstance(att, dict) and 'path' in att:
-                paths.append(att['path'])
+            if isinstance(att, dict) and "path" in att:
+                paths.append(att["path"])
 
             # Thumbnail
-            if isinstance(att, dict) and 'thumbnail' in att:
-                thumb = att['thumbnail']
-                if isinstance(thumb, dict) and 'path' in thumb:
-                    paths.append(thumb['path'])
+            if isinstance(att, dict) and "thumbnail" in att:
+                thumb = att["thumbnail"]
+                if isinstance(thumb, dict) and "path" in thumb and thumb['path']:
+                    paths.append(thumb["path"])
 
             # Screenshot
-            if isinstance(att, dict) and 'screenshot' in att:
-                screenshot = att['screenshot']
-                if isinstance(screenshot, dict) and 'path' in screenshot:
-                    paths.append(screenshot['path'])
+            if isinstance(att, dict) and "screenshot" in att:
+                screenshot = att["screenshot"]
+                if isinstance(screenshot, dict) and "path" in screenshot and screenshot['path']:
+                    paths.append(screenshot["path"])
 
         # Quote attachments
-        quote = msg_json.get('quote', {})
+        quote = msg_json.get("quote", {})
         if isinstance(quote, dict):
-            quote_attachments = quote.get('attachments', [])
+            quote_attachments = quote.get("attachments", [])
             for att in quote_attachments:
-                if isinstance(att, dict) and 'thumbnail' in att:
-                    thumb = att['thumbnail']
-                    if isinstance(thumb, dict) and 'path' in thumb:
-                        paths.append(thumb['path'])
+                if isinstance(att, dict) and "thumbnail" in att:
+                    thumb = att["thumbnail"]
+                    if isinstance(thumb, dict) and "path" in thumb:
+                        paths.append(thumb["path"])
 
         # Preview attachments
-        previews = msg_json.get('preview', [])
+        previews = msg_json.get("preview", [])
         for preview in previews:
-            if isinstance(preview, dict) and 'image' in preview:
-                img = preview['image']
-                if isinstance(img, dict) and 'path' in img:
-                    paths.append(img['path'])
+            if isinstance(preview, dict) and "image" in preview:
+                img = preview["image"]
+                if isinstance(img, dict) and "path" in img:
+                    paths.append(img["path"])
 
         # Contact avatars
-        contacts = msg_json.get('contact', [])
+        contacts = msg_json.get("contact", [])
         for contact in contacts:
-            if isinstance(contact, dict) and 'avatar' in contact:
-                avatar = contact['avatar']
-                if isinstance(avatar, dict) and 'path' in avatar:
-                    paths.append(avatar['path'])
+            if isinstance(contact, dict) and "avatar" in contact:
+                avatar = contact["avatar"]
+                if isinstance(avatar, dict) and "path" in avatar:
+                    paths.append(avatar["path"])
 
         # Sticker
-        sticker = msg_json.get('sticker', {})
-        if isinstance(sticker, dict) and 'path' in sticker:
-            paths.append(sticker['path'])
+        sticker = msg_json.get("sticker", {})
+        if isinstance(sticker, dict) and "path" in sticker:
+            paths.append(sticker["path"])
 
         # Download path (in downloads directory)
         for att in attachments:
-            if isinstance(att, dict) and 'downloadPath' in att:
-                paths.append(att['downloadPath'])
+            if isinstance(att, dict) and "downloadPath" in att:
+                paths.append(att["downloadPath"])
 
         return paths
 
     def delete_attachment_file(self, relative_path: str) -> Tuple[bool, int]:
         """Delete an attachment file and return (success, bytes_freed)"""
         # Determine which base directory this file is in
-        if relative_path.startswith('downloads'):
+        if relative_path.startswith("downloads"):
             base_dir = self.user_data_path
         else:
             base_dir = self.attachments_dir
@@ -426,21 +539,27 @@ class SignalAttachmentCleaner:
             file_size = file_path.stat().st_size
 
             if self.dry_run:
-                self.log(f"[DRY RUN] Would delete: {relative_path} ({self._format_bytes(file_size)})")
+                self.log(
+                    f"[DRY RUN] Would delete: {relative_path} ({self._format_bytes(file_size)})",
+                    "DEBUG"
+                )
                 return True, file_size
             else:
                 file_path.unlink()
-                self.log(f"Deleted: {relative_path} ({self._format_bytes(file_size)})", "DEBUG")
+                self.log(
+                    f"Deleted: {relative_path} ({self._format_bytes(file_size)})",
+                    "DEBUG",
+                )
                 return True, file_size
 
         except Exception as e:
             self.log(f"Error deleting {relative_path}: {e}", "ERROR")
-            self.stats['errors'] += 1
+            self.stats["errors"] += 1
             return False, 0
 
     def _format_bytes(self, bytes_size: int) -> str:
         """Format bytes as human-readable string"""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
             if bytes_size < 1024.0:
                 return f"{bytes_size:.2f} {unit}"
             bytes_size /= 1024.0
@@ -450,22 +569,26 @@ class SignalAttachmentCleaner:
         """Main cleanup function"""
         # Parse date
         cutoff_date = self.parse_date_string(before_date)
-        cutoff_timestamp = int(cutoff_date.timestamp() * 1000)  # Convert to milliseconds
+        cutoff_timestamp = int(
+            cutoff_date.timestamp() * 1000
+        )  # Convert to milliseconds
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"Signal Desktop Attachment Cleanup")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print(f"User data path: {self.user_data_path}")
         print(f"Cutoff date: {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Cutoff timestamp: {cutoff_timestamp}")
         print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE DELETION'}")
-        print(f"{'='*70}\n")
+        print(f"{'=' * 70}\n")
 
         if self.dry_run:
             print("⚠️  DRY RUN MODE: No files will actually be deleted\n")
         else:
-            response = input("⚠️  WARNING: This will permanently delete attachment files. Continue? (yes/no): ")
-            if response.lower() != 'yes':
+            response = input(
+                "⚠️  WARNING: This will permanently delete attachment files. Continue? (yes/no): "
+            )
+            if response.lower() != "yes":
                 print("Aborted.")
                 return
             print()
@@ -489,39 +612,44 @@ class SignalAttachmentCleaner:
 
             # Process each message
             for i, message in enumerate(messages, 1):
-                self.stats['messages_processed'] += 1
+                self.stats["messages_processed"] += 1
 
                 # Extract attachment paths
                 paths = self.extract_attachment_paths(message)
 
                 if paths:
-                    self.log(f"Message {i}/{len(messages)}: {len(paths)} attachment(s)", "DEBUG")
+                    self.log(
+                        f"Message {i}/{len(messages)}: {len(paths)} attachment(s)",
+                        "DEBUG",
+                    )
 
                     # Delete each attachment file
                     for path in paths:
                         success, bytes_freed = self.delete_attachment_file(path)
                         if success:
-                            self.stats['files_deleted'] += 1
-                            self.stats['bytes_freed'] += bytes_freed
+                            self.stats["files_deleted"] += 1
+                            self.stats["bytes_freed"] += bytes_freed
 
                 # Progress indicator
                 if i % 100 == 0:
-                    print(f"Progress: {i}/{len(messages)} messages processed, "
-                          f"{self.stats['files_deleted']} files deleted, "
-                          f"{self._format_bytes(self.stats['bytes_freed'])} freed")
+                    print(
+                        f"Progress: {i}/{len(messages)} messages processed, "
+                        f"{self.stats['files_deleted']} files deleted, "
+                        f"{self._format_bytes(self.stats['bytes_freed'])} freed"
+                    )
 
         finally:
             conn.close()
 
         # Print summary
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print("Cleanup Summary")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print(f"Messages processed: {self.stats['messages_processed']}")
         print(f"Files deleted: {self.stats['files_deleted']}")
         print(f"Space freed: {self._format_bytes(self.stats['bytes_freed'])}")
         print(f"Errors: {self.stats['errors']}")
-        print(f"{'='*70}\n")
+        print(f"{'=' * 70}\n")
 
         if self.dry_run:
             print("This was a DRY RUN. No files were actually deleted.")
@@ -549,31 +677,29 @@ Examples:
 Date formats supported:
   - Absolute: "2024-01-01", "2024-01-01 12:00:00"
   - Relative: "1 year ago", "6 months ago", "30 days ago", "2 weeks ago"
-        """
+        """,
     )
 
     parser.add_argument(
-        '--user-data',
+        "--user-data",
         required=True,
-        help='Path to Signal Desktop user data directory (e.g., ~/.config/Signal)'
+        help="Path to Signal Desktop user data directory (e.g., ~/.config/Signal)",
     )
 
     parser.add_argument(
-        '--before',
+        "--before",
         required=True,
-        help='Delete attachments before this date (e.g., "2024-01-01" or "1 year ago")'
+        help='Delete attachments before this date (e.g., "2024-01-01" or "1 year ago")',
     )
 
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Show what would be deleted without actually deleting'
+        "--dry-run",
+        action="store_true",
+        help="Show what would be deleted without actually deleting",
     )
 
     parser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        help='Enable verbose output'
+        "-v", "--verbose", action="store_true", help="Enable verbose output"
     )
 
     args = parser.parse_args()
@@ -585,7 +711,9 @@ Date formats supported:
         sys.exit(1)
 
     # Run cleanup
-    cleaner = SignalAttachmentCleaner(user_data_path, dry_run=args.dry_run, verbose=args.verbose)
+    cleaner = SignalAttachmentCleaner(
+        user_data_path, dry_run=args.dry_run, verbose=args.verbose
+    )
 
     try:
         cleaner.cleanup_attachments(args.before)
@@ -596,6 +724,7 @@ Date formats supported:
         print(f"\nError: {e}")
         if args.verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 

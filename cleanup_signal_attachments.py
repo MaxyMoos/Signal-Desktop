@@ -9,19 +9,29 @@ Usage:
     python cleanup_signal_attachments.py --user-data ~/.config/Signal --before "2024-01-01"
     python cleanup_signal_attachments.py --user-data ~/Library/Application\ Support/Signal --before "1 year ago" --dry-run
 
-Requirements:
-    pip install sqlcipher3 python-dateutil
+Requirements (Basic):
+    pip install pysqlcipher3 python-dateutil
+
+Requirements (Modern Signal with encrypted keys):
+    Linux:   pip install pysqlcipher3 python-dateutil keyring cryptography secretstorage
+    macOS:   pip install pysqlcipher3 python-dateutil keyring cryptography
+    Windows: pip install pysqlcipher3 python-dateutil keyring pywin32
+
+The script will automatically detect whether your Signal uses modern encrypted keys
+or legacy plaintext keys and use the appropriate decryption method.
 """
 
 import argparse
+import base64
 import json
 import os
+import platform
 import shutil
 import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 try:
     from pysqlcipher3 import dbapi2 as sqlcipher
@@ -37,6 +47,12 @@ except ImportError:
     print("Error: python-dateutil is not installed.")
     print("Install it with: pip install python-dateutil")
     sys.exit(1)
+
+try:
+    import keyring
+    KEYRING_AVAILABLE = True
+except ImportError:
+    KEYRING_AVAILABLE = False
 
 
 class SignalAttachmentCleaner:
@@ -65,18 +81,179 @@ class SignalAttachmentCleaner:
             prefix = f"[{level}]"
             print(f"{prefix} {message}")
 
+    def _decrypt_key_linux(self, encrypted_hex: str) -> Optional[str]:
+        """Decrypt key on Linux using libsecret/keyring"""
+        if not KEYRING_AVAILABLE:
+            return None
+
+        try:
+            # Electron uses "Chromium Safe Storage" or "Electron Safe Storage" as service name
+            # Try both service names
+            for service_name in ["Electron Safe Storage", "Chromium Safe Storage"]:
+                try:
+                    master_key = keyring.get_password(service_name, "Electron")
+                    if master_key:
+                        # Decrypt the encryptedKey using the master key
+                        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                        from cryptography.hazmat.backends import default_backend
+
+                        encrypted_bytes = bytes.fromhex(encrypted_hex)
+
+                        # Electron/Chromium uses AES-128-CBC with PKCS7 padding
+                        # The encrypted data format is: version(1) + iv(16) + ciphertext + auth_tag
+                        if len(encrypted_bytes) < 1:
+                            continue
+
+                        version = encrypted_bytes[0]
+                        if version != ord('v') and version != 1:  # v10 or v11 format
+                            continue
+
+                        # For v10: Skip 'v10' prefix (3 bytes)
+                        # For v11: Skip 'v11' prefix (3 bytes)
+                        data = encrypted_bytes[3:] if version == ord('v') else encrypted_bytes[1:]
+
+                        if len(data) < 16:
+                            continue
+
+                        iv = data[:16]
+                        ciphertext = data[16:]
+
+                        # Derive AES key from master password using PBKDF2
+                        from cryptography.hazmat.primitives import hashes
+                        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+
+                        salt = b'saltysalt'
+                        iterations = 1
+                        key_length = 16
+
+                        kdf = PBKDF2(
+                            algorithm=hashes.SHA1(),
+                            length=key_length,
+                            salt=salt,
+                            iterations=iterations,
+                            backend=default_backend()
+                        )
+                        key = kdf.derive(master_key.encode())
+
+                        cipher = Cipher(
+                            algorithms.AES(key),
+                            modes.CBC(iv),
+                            backend=default_backend()
+                        )
+                        decryptor = cipher.decryptor()
+                        decrypted = decryptor.update(ciphertext) + decryptor.finalize()
+
+                        # Remove PKCS7 padding
+                        padding_length = decrypted[-1]
+                        decrypted = decrypted[:-padding_length]
+
+                        return decrypted.decode('utf-8')
+                except Exception:
+                    continue
+
+            return None
+        except Exception:
+            return None
+
+    def _decrypt_key_macos(self, encrypted_hex: str) -> Optional[str]:
+        """Decrypt key on macOS using Keychain"""
+        if not KEYRING_AVAILABLE:
+            return None
+
+        try:
+            # Similar process to Linux, but using macOS Keychain
+            master_key = keyring.get_password("Electron Safe Storage", "Electron")
+            if not master_key:
+                master_key = keyring.get_password("Chromium Safe Storage", "Chromium")
+
+            if master_key:
+                # Same decryption process as Linux
+                return self._decrypt_key_linux(encrypted_hex)
+            return None
+        except Exception:
+            return None
+
+    def _decrypt_key_windows(self, encrypted_hex: str) -> Optional[str]:
+        """Decrypt key on Windows using DPAPI"""
+        try:
+            import win32crypt
+            encrypted_bytes = bytes.fromhex(encrypted_hex)
+            decrypted_bytes = win32crypt.CryptUnprotectData(encrypted_bytes, None, None, None, 0)[1]
+            return decrypted_bytes.decode('utf-8')
+        except ImportError:
+            self.log("win32crypt not available - cannot decrypt Windows key", "WARNING")
+            return None
+        except Exception:
+            return None
+
+    def _decrypt_encrypted_key(self, encrypted_hex: str) -> Optional[str]:
+        """Decrypt the modern encryptedKey format based on platform"""
+        system = platform.system()
+
+        if system == "Linux":
+            return self._decrypt_key_linux(encrypted_hex)
+        elif system == "Darwin":  # macOS
+            return self._decrypt_key_macos(encrypted_hex)
+        elif system == "Windows":
+            return self._decrypt_key_windows(encrypted_hex)
+        else:
+            return None
+
     def get_database_key(self) -> str:
-        """Extract the database encryption key from config.json"""
+        """Extract the database encryption key from config.json
+
+        Supports both modern (encryptedKey) and legacy (key) formats.
+        Modern format requires platform-specific decryption.
+        """
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
         with open(self.config_path, 'r') as f:
             config = json.load(f)
 
-        if 'key' not in config:
-            raise ValueError("Database key not found in config.json")
+        # Try modern encrypted key first
+        encrypted_key = config.get('encryptedKey')
+        legacy_key = config.get('key')
 
-        return config['key']
+        if encrypted_key:
+            self.log("Found modern encrypted key, attempting to decrypt...", "DEBUG")
+
+            decrypted_key = self._decrypt_encrypted_key(encrypted_key)
+
+            if decrypted_key:
+                self.log("Successfully decrypted modern key", "DEBUG")
+                return decrypted_key
+            else:
+                self.log("Failed to decrypt modern key", "WARNING")
+
+                # If we also have a legacy key, try that as fallback
+                if legacy_key:
+                    self.log("Falling back to legacy plaintext key", "WARNING")
+                    return legacy_key
+                else:
+                    raise ValueError(
+                        "Failed to decrypt modern encryptedKey and no legacy key available.\n"
+                        "This script requires access to your system's keyring to decrypt the database key.\n"
+                        "Please ensure you have the required libraries installed:\n"
+                        "  - Linux: pip install keyring cryptography secretstorage\n"
+                        "  - macOS: pip install keyring cryptography\n"
+                        "  - Windows: pip install keyring pywin32\n"
+                        "\nAlternatively, you can temporarily revert to legacy key format by:\n"
+                        "1. Backing up your config.json\n"
+                        "2. Removing the 'encryptedKey' field\n"
+                        "3. Running Signal Desktop once (it will regenerate the key)\n"
+                        "4. Running this cleanup script"
+                    )
+
+        # Try legacy plaintext key
+        if legacy_key:
+            self.log("Using legacy plaintext key", "DEBUG")
+            return legacy_key
+
+        raise ValueError(
+            "No database key found in config.json.\n"
+            "Neither 'encryptedKey' nor 'key' field is present."
+        )
 
     def parse_date_string(self, date_str: str) -> datetime:
         """Parse various date formats including relative dates"""

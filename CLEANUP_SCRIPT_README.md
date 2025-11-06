@@ -27,28 +27,36 @@ python3 --version
 
 ### 2. Install Required Dependencies
 
+The script requires different dependencies based on your Signal Desktop configuration:
+
+#### Basic Dependencies (Required)
+
 ```bash
 pip install pysqlcipher3 python-dateutil
 ```
 
-**Note**: On some systems, you may need additional libraries:
+#### Encryption Dependencies (Required for Modern Signal Versions)
 
-**Ubuntu/Debian:**
+Modern Signal Desktop versions use encrypted database keys. You'll need additional packages:
+
+**Linux (Ubuntu/Debian):**
 ```bash
-sudo apt-get install libsqlcipher-dev
-pip install pysqlcipher3 python-dateutil
+sudo apt-get install libsqlcipher-dev libsecret-1-dev
+pip install pysqlcipher3 python-dateutil keyring cryptography secretstorage
 ```
 
 **macOS (with Homebrew):**
 ```bash
 brew install sqlcipher
-pip install pysqlcipher3 python-dateutil
+pip install pysqlcipher3 python-dateutil keyring cryptography
 ```
 
 **Windows:**
 ```bash
-pip install pysqlcipher3-binary python-dateutil
+pip install pysqlcipher3-binary python-dateutil keyring pywin32
 ```
+
+**Note**: If you're using an older Signal Desktop version with legacy (plaintext) keys, you only need the basic dependencies. The script will automatically detect and use the appropriate key format.
 
 ## Usage
 
@@ -299,6 +307,41 @@ Possible causes:
 2. The database is corrupted
 3. You're using the wrong user data directory
 4. The config.json file is from a different Signal installation
+
+### Error: "Failed to decrypt modern encryptedKey"
+
+Modern Signal versions store the database key in an encrypted format. This error occurs when the script can't decrypt it.
+
+**Solutions:**
+
+1. **Install missing encryption dependencies:**
+
+   Linux:
+   ```bash
+   pip install keyring cryptography secretstorage
+   sudo apt-get install libsecret-1-dev
+   ```
+
+   macOS:
+   ```bash
+   pip install keyring cryptography
+   ```
+
+   Windows:
+   ```bash
+   pip install keyring pywin32
+   ```
+
+2. **Run the script on the same machine as Signal Desktop:**
+   The encryption key is tied to your system's keyring/keychain. You can't decrypt it on a different machine.
+
+3. **Fallback to legacy key (temporary workaround):**
+   If you need to run the script urgently and can't decrypt the modern key:
+   - Back up your `config.json`
+   - Remove the `encryptedKey` field from `config.json`
+   - Start Signal Desktop once (it will regenerate a plaintext key)
+   - Run the cleanup script
+   - Restore your backup after (Signal will re-encrypt on next start)
 
 ### Error: "Database is locked"
 

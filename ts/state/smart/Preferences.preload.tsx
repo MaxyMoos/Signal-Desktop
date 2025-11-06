@@ -40,6 +40,7 @@ import {
 } from '../selectors/user.std.js';
 import { EmojiSkinTone } from '../../components/fun/data/emojis.std.js';
 import { renderClearingDataView } from '../../shims/renderClearingDataView.preload.js';
+import { deleteOldAttachments } from '../../util/deleteOldAttachments.preload.js';
 import OS from '../../util/os/osPreload.preload.js';
 import { themeChanged } from '../../shims/themeChanged.dom.js';
 import * as Settings from '../../types/Settings.std.js';
@@ -91,6 +92,7 @@ import type {
 import type { ThemeType } from '../../util/preload.preload.js';
 import type { WidthBreakpoint } from '../../components/_util.std.js';
 import { DialogType } from '../../types/Dialogs.std.js';
+import { ToastType } from '../../types/Toast.dom.js';
 import { promptOSAuth } from '../../util/promptOSAuth.preload.js';
 import type { StateType } from '../reducer.preload.js';
 import {
@@ -288,6 +290,27 @@ export function SmartPreferences(): JSX.Element | null {
   const validateBackup = () => backupsService._internalValidate();
   const exportLocalBackup = () => backupsService._internalExportLocalBackup();
   const pickLocalBackupFolder = () => backupsService.pickLocalBackupFolder();
+
+  const doCleanupOldData = async (beforeDate: Date) => {
+    try {
+      const result = await deleteOldAttachments({
+        beforeTimestamp: beforeDate.getTime(),
+      });
+
+      showToast({
+        toastType: ToastType.CleanupOldDataSuccess,
+        parameters: {
+          totalMessages: result.totalMessages,
+          deletedFiles: result.deletedAttachmentFiles,
+        },
+      });
+    } catch (error) {
+      showToast({
+        toastType: ToastType.CleanupOldDataError,
+      });
+      throw error;
+    }
+  };
 
   const doDeleteAllData = () => renderClearingDataView();
   const refreshCloudBackupStatus =
@@ -801,6 +824,7 @@ export function SmartPreferences(): JSX.Element | null {
           emojiSkinToneDefault={emojiSkinToneDefault}
           exportLocalBackup={exportLocalBackup}
           phoneNumber={phoneNumber}
+          doCleanupOldData={doCleanupOldData}
           doDeleteAllData={doDeleteAllData}
           editCustomColor={editCustomColor}
           getConversationsWithCustomColor={getConversationsWithCustomColor}

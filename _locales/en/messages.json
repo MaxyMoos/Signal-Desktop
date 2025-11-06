@@ -2553,6 +2553,38 @@
     "messageformat": "Open at computer login",
     "description": "Description for the automatic launch setting"
   },
+  "icu:Preferences__cleanup-old-data--title": {
+    "messageformat": "Cleanup old media",
+    "description": "Title for the cleanup old media attachments setting"
+  },
+  "icu:Preferences__cleanup-old-data--description": {
+    "messageformat": "Delete media attachments from messages older than a specified date to free up storage space. Message text will be preserved.",
+    "description": "Description for the cleanup old media attachments setting"
+  },
+  "icu:Preferences__cleanup-old-data--button": {
+    "messageformat": "Cleanup",
+    "description": "Button text to open the cleanup old data dialog"
+  },
+  "icu:Preferences__cleanup-old-data__modal--title": {
+    "messageformat": "Cleanup Old Media",
+    "description": "Title for the cleanup old data modal dialog"
+  },
+  "icu:Preferences__cleanup-old-data__modal--body": {
+    "messageformat": "Select a date to delete all media attachments (photos, videos, audio, documents) from messages received before that date. This will help free up storage space while keeping your message text intact.",
+    "description": "Body text for the cleanup old data modal dialog"
+  },
+  "icu:Preferences__cleanup-old-data__modal--date-label": {
+    "messageformat": "Delete media from before:",
+    "description": "Label for the date input in the cleanup old data dialog"
+  },
+  "icu:Preferences__cleanup-old-data__modal--delete": {
+    "messageformat": "Delete Media",
+    "description": "Button text to confirm deletion in the cleanup old data dialog"
+  },
+  "icu:Preferences__cleanup-old-data__modal--warning": {
+    "messageformat": "Warning: This action cannot be undone. All media attachments from messages before the selected date will be permanently deleted from your device.",
+    "description": "Warning text in the cleanup old data dialog"
+  },
   "icu:clearDataHeader": {
     "messageformat": "Delete application data",
     "description": "Header in the settings dialog for the section dealing with data deletion"
@@ -2883,6 +2915,14 @@
   "icu:Toast--error--action": {
     "messageformat": "Submit log",
     "description": "Label for the error toast button"
+  },
+  "icu:Toast--cleanup-old-data-success": {
+    "messageformat": "Cleanup complete. Processed {totalMessages, number} {totalMessages, plural, one {message} other {messages}}, deleted {deletedFiles, number} {deletedFiles, plural, one {file} other {files}}.",
+    "description": "Toast shown when cleanup old data operation completes successfully"
+  },
+  "icu:Toast--cleanup-old-data-error": {
+    "messageformat": "Failed to cleanup old media. Please try again.",
+    "description": "Toast shown when cleanup old data operation fails"
   },
   "icu:Toast--failed-to-fetch-username": {
     "messageformat": "Failed to fetch username. Check your connection and try again.",

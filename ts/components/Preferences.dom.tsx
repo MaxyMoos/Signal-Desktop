@@ -19,6 +19,7 @@ import type { BackupLevel } from '@signalapp/libsignal-client/zkgroup.js';
 import { ChatColorPicker } from './ChatColorPicker.dom.js';
 import { Checkbox } from './Checkbox.dom.js';
 import { WidthBreakpoint } from './_util.std.js';
+import { CleanupOldDataDialog } from './CleanupOldDataDialog.dom.js';
 import { ConfirmationDialog } from './ConfirmationDialog.dom.js';
 import { DisappearingTimeDialog } from './DisappearingTimeDialog.dom.js';
 import { PhoneNumberDiscoverability } from '../util/phoneNumberDiscoverability.std.js';
@@ -237,6 +238,7 @@ type PropsFunctionType = {
 
   // Other props
   addCustomColor: (color: CustomColorType) => unknown;
+  doCleanupOldData: (beforeDate: Date) => Promise<void>;
   doDeleteAllData: () => unknown;
   editCustomColor: (colorId: string, color: CustomColorType) => unknown;
   exportLocalBackup: () => Promise<BackupValidationResultType>;
@@ -397,6 +399,7 @@ export function Preferences({
   customColors,
   defaultConversationColor,
   deviceName = '',
+  doCleanupOldData,
   doDeleteAllData,
   editCustomColor,
   emojiSkinToneDefault,
@@ -539,6 +542,7 @@ export function Preferences({
   const languageId = useId();
 
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showCleanupOldData, setShowCleanupOldData] = useState(false);
   const [confirmStoriesOff, setConfirmStoriesOff] = useState(false);
   const [confirmContentProtection, setConfirmContentProtection] =
     useState(false);
@@ -1789,6 +1793,38 @@ export function Preferences({
                 'Preferences__two-thirds-flow'
               )}
             >
+              <div>{i18n('icu:Preferences__cleanup-old-data--title')}</div>
+              <div className="Preferences__description">
+                {i18n('icu:Preferences__cleanup-old-data--description')}
+              </div>
+            </div>
+
+            <div
+              className={classNames(
+                'Preferences__pnp',
+                'Preferences__flow-button',
+                'Preferences__one-third-flow',
+                'Preferences__one-third-flow--align-right'
+              )}
+            >
+              <AxoButton.Root
+                variant="secondary"
+                size="large"
+                onClick={() => setShowCleanupOldData(true)}
+              >
+                {i18n('icu:Preferences__cleanup-old-data--button')}
+              </AxoButton.Root>
+            </div>
+          </FlowingControl>
+        </SettingsRow>
+        <SettingsRow>
+          <FlowingControl>
+            <div
+              className={classNames(
+                'Preferences__pnp',
+                'Preferences__two-thirds-flow'
+              )}
+            >
               <div>{i18n('icu:clearDataHeader')}</div>
               <div className="Preferences__description">
                 {i18n('icu:clearDataExplanation')}
@@ -1813,6 +1849,14 @@ export function Preferences({
             </div>
           </FlowingControl>
         </SettingsRow>
+        {showCleanupOldData ? (
+          <CleanupOldDataDialog
+            i18n={i18n}
+            theme={theme}
+            onClose={() => setShowCleanupOldData(false)}
+            onConfirm={doCleanupOldData}
+          />
+        ) : null}
         {confirmDelete ? (
           <ConfirmationDialog
             dialogName="Preference.deleteAllData"

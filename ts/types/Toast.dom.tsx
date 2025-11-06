@@ -22,6 +22,8 @@ export enum ToastType {
   ChatFolderCreated = 'ChatFolderCreated',
   ChatFolderAddedChat = 'ChatFolderAddedChat',
   ChatFolderRemovedChat = 'ChatFolderRemovedChat',
+  CleanupOldDataSuccess = 'CleanupOldDataSuccess',
+  CleanupOldDataError = 'CleanupOldDataError',
   ConversationArchived = 'ConversationArchived',
   ConversationMarkedUnread = 'ConversationMarkedUnread',
   ConversationRemoved = 'ConversationRemoved',
@@ -132,6 +134,11 @@ export type AnyToast =
       toastType: ToastType.ChatFolderCreated;
       parameters: { chatFolderName: string };
     }
+  | {
+      toastType: ToastType.CleanupOldDataSuccess;
+      parameters: { totalMessages: number; deletedFiles: number };
+    }
+  | { toastType: ToastType.CleanupOldDataError }
   | {
       toastType: ToastType.ConversationArchived;
       parameters: { conversationId: string; wasPinned: boolean };

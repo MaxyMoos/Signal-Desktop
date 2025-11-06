@@ -231,6 +231,25 @@ export function renderToast({
     );
   }
 
+  if (toastType === ToastType.CleanupOldDataSuccess) {
+    return (
+      <Toast onClose={hideToast}>
+        {i18n('icu:Toast--cleanup-old-data-success', {
+          totalMessages: toast.parameters.totalMessages,
+          deletedFiles: toast.parameters.deletedFiles,
+        })}
+      </Toast>
+    );
+  }
+
+  if (toastType === ToastType.CleanupOldDataError) {
+    return (
+      <Toast onClose={hideToast}>
+        {i18n('icu:Toast--cleanup-old-data-error')}
+      </Toast>
+    );
+  }
+
   if (toastType === ToastType.ConversationArchived) {
     return (
       <Toast

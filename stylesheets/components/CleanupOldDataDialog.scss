@@ -1,6 +1,9 @@
 // Copyright 2025 Signal Messenger, LLC
 // SPDX-License-Identifier: AGPL-3.0-only
 
+@use '../mixins';
+@use '../variables';
+
 .CleanupOldDataDialog {
   &__content {
     display: flex;
@@ -20,13 +23,13 @@
   }
 
   &__label {
-    @include axo-text-body-medium;
+    @include mixins.font-body-1;
     color: var(--axo-colors-text-default);
     font-weight: 500;
   }
 
   &__date-input {
-    @include axo-text-body-medium;
+    @include mixins.font-body-1;
     padding: 12px;
     border: 1px solid var(--axo-colors-border-default);
     border-radius: 8px;
@@ -50,7 +53,7 @@
   }
 
   &__warning {
-    @include axo-text-body-small;
+    @include mixins.font-body-small;
     padding: 12px;
     border-radius: 8px;
     background-color: var(--axo-colors-warning-alpha-10);

@@ -619,6 +619,60 @@ $secondary-text-color: light-dark(
   }
 }
 
+.Preferences__cleanup-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  p {
+    margin: 0;
+  }
+
+  &__date-input-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__label {
+    @include mixins.font-body-1;
+    font-weight: 500;
+  }
+
+  &__date-input {
+    @include mixins.font-body-1;
+    padding: 12px;
+    border: 1px solid light-dark(variables.$color-gray-25, variables.$color-gray-65);
+    border-radius: 8px;
+    background-color: light-dark(variables.$color-white, variables.$color-gray-80);
+    color: light-dark(variables.$color-gray-90, variables.$color-gray-05);
+
+    &:hover:not(:disabled) {
+      border-color: light-dark(variables.$color-gray-45, variables.$color-gray-45);
+    }
+
+    &:focus {
+      outline: none;
+      border-color: variables.$color-ultramarine;
+      box-shadow: 0 0 0 3px rgba(variables.$ultramarine-rgb, 0.1);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__warning {
+    @include mixins.font-body-small;
+    padding: 12px;
+    border-radius: 8px;
+    background-color: rgba(variables.$warning-rgb, 0.1);
+    color: light-dark(variables.$color-accent-yellow, variables.$color-accent-yellow);
+    border-left: 4px solid variables.$color-accent-yellow;
+  }
+}
+
 .Preferences__LanguageIcon {
   @include mixins.light-theme {
     @include mixins.color-svg(

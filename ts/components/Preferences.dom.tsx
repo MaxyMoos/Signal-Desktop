@@ -19,7 +19,6 @@ import type { BackupLevel } from '@signalapp/libsignal-client/zkgroup.js';
 import { ChatColorPicker } from './ChatColorPicker.dom.js';
 import { Checkbox } from './Checkbox.dom.js';
 import { WidthBreakpoint } from './_util.std.js';
-import { CleanupOldDataDialog } from './CleanupOldDataDialog.dom.js';
 import { ConfirmationDialog } from './ConfirmationDialog.dom.js';
 import { DisappearingTimeDialog } from './DisappearingTimeDialog.dom.js';
 import { PhoneNumberDiscoverability } from '../util/phoneNumberDiscoverability.std.js';
@@ -543,6 +542,12 @@ export function Preferences({
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showCleanupOldData, setShowCleanupOldData] = useState(false);
+  const [cleanupDate, setCleanupDate] = useState<string>(() => {
+    // Default to 1 year ago
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    return oneYearAgo.toISOString().split('T')[0];
+  });
   const [confirmStoriesOff, setConfirmStoriesOff] = useState(false);
   const [confirmContentProtection, setConfirmContentProtection] =
     useState(false);
@@ -1850,12 +1855,52 @@ export function Preferences({
           </FlowingControl>
         </SettingsRow>
         {showCleanupOldData ? (
-          <CleanupOldDataDialog
+          <ConfirmationDialog
+            dialogName="Preference.cleanupOldData"
+            actions={[
+              {
+                action: async () => {
+                  const date = new Date(cleanupDate);
+                  date.setHours(23, 59, 59, 999);
+                  await doCleanupOldData(date);
+                  setShowCleanupOldData(false);
+                },
+                style: 'negative',
+                text: i18n('icu:Preferences__cleanup-old-data__modal--delete'),
+              },
+            ]}
             i18n={i18n}
-            theme={theme}
-            onClose={() => setShowCleanupOldData(false)}
-            onConfirm={doCleanupOldData}
-          />
+            onClose={() => {
+              setShowCleanupOldData(false);
+            }}
+            title={i18n('icu:Preferences__cleanup-old-data__modal--title')}
+            hasXButton
+          >
+            <div className="Preferences__cleanup-dialog">
+              <p>{i18n('icu:Preferences__cleanup-old-data__modal--body')}</p>
+
+              <div className="Preferences__cleanup-dialog__date-input-container">
+                <label
+                  htmlFor="cleanup-date-input"
+                  className="Preferences__cleanup-dialog__label"
+                >
+                  {i18n('icu:Preferences__cleanup-old-data__modal--date-label')}
+                </label>
+                <input
+                  id="cleanup-date-input"
+                  type="date"
+                  className="Preferences__cleanup-dialog__date-input"
+                  value={cleanupDate}
+                  max={new Date().toISOString().split('T')[0]}
+                  onChange={e => setCleanupDate(e.target.value)}
+                />
+              </div>
+
+              <div className="Preferences__cleanup-dialog__warning">
+                {i18n('icu:Preferences__cleanup-old-data__modal--warning')}
+              </div>
+            </div>
+          </ConfirmationDialog>
         ) : null}
         {confirmDelete ? (
           <ConfirmationDialog

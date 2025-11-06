@@ -47,12 +47,10 @@ export async function deleteOldAttachments(
   // Get all messages with attachments before the specified date
   // We use received_at as the primary timestamp field
   const allMessages = await DataReader._getAllMessages();
+  log.info(`All messages = ${allMessages.length} messages`);
   const messagesWithAttachments = allMessages.filter(message => {
     const messageTimestamp = message.received_at || message.sent_at || 0;
-    const hasAttachments =
-      message.hasAttachments ||
-      message.hasVisualMediaAttachments ||
-      message.hasFileAttachments;
+    const hasAttachments = message.attachments;
 
     return messageTimestamp < beforeTimestamp && hasAttachments;
   });

@@ -654,7 +654,7 @@ $secondary-text-color: light-dark(
     &:focus {
       outline: none;
       border-color: variables.$color-ultramarine;
-      box-shadow: 0 0 0 3px rgba(variables.$ultramarine-rgb, 0.1);
+      box-shadow: 0 0 0 3px rgba(variables.$color-ultramarine, 0.1);
     }
 
     &:disabled {
@@ -667,7 +667,7 @@ $secondary-text-color: light-dark(
     @include mixins.font-body-small;
     padding: 12px;
     border-radius: 8px;
-    background-color: rgba(variables.$warning-rgb, 0.1);
+    background-color: rgba(variables.$color-orange, 0.1);
     color: light-dark(variables.$color-accent-yellow, variables.$color-accent-yellow);
     border-left: 4px solid variables.$color-accent-yellow;
   }
